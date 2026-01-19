@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "opsdash"
+version = "0.1.0"
+description = "GIS operational dashboard using public Bellevue and Sarpy County data"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Kent Rainey Biler" }
+]
+
+dependencies = [
+    "pandas>=2.1",
+    "numpy>=1.26",
+    "geopandas>=0.14",
+    "shapely>=2.0",
+    "pyarrow>=14.0",
+    "requests>=2.31",
+    "beautifulsoup4>=4.12",
+    "pydantic>=2.5",
+    "python-dotenv>=1.0",
+    "streamlit>=1.30",
+    "folium>=0.15",
+    "pydeck>=0.8"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "black>=23.11",
+    "ruff>=0.1.7",
+    "jupyterlab>=4.0"
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 88
+
+[tool.ruff]
+line-length = 88
+select = ["E", "F", "I"]
