@@ -1,4 +1,4 @@
-# NuMetriq - Sarpy County Zoning Parcel Dashboard
+# Sarpy County Zoning Parcel Dashboard
 
 ![Status](https://img.shiels.io/badge/status-public%20release-green)
 
