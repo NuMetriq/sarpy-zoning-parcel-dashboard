@@ -6,7 +6,7 @@ A reproducible GIS analytics pipeline and interactive dashboard that shows how p
 
 This project uses publicly available ArcGIS GIS data published by Sarpy County to demonstrate an end-to-end workflow: ingestion, validation, spatial joins, geometry repair, aggregation, and visualization.
 
-**Build by NuMetriq LLC** using publicly available Sarpy County GIS data.
+**Built by NuMetriq LLC** using publicly available Sarpy County GIS data.
 
 
 ## Project Purpose
@@ -124,7 +124,8 @@ No proprietary or restricted data is used.
 
 ## Repository Structure
 
-bellevue-sarpy-gis-ops-dashboard/
+
+```text
 ├── data/
 │   ├── raw/                # Raw GeoJSON pulled from ArcGIS
 │   └── processed/          # Cleaned Parquet datasets
@@ -142,6 +143,7 @@ bellevue-sarpy-gis-ops-dashboard/
 ├── .env.example
 ├── README.md
 └── pyproject.toml
+```
 
 Raw and processed GIS datasets are intentionally excluded from version control and are fully reproducible using the included ingestion scripts and public ArcGIS REST services.
 
@@ -159,11 +161,9 @@ cd sarpy-zoning-parcel-dashboard
 
 ### 2) Create and activate a virtual environment
 
-```bash
-
+```powershell
 python -m venv .venv
-
-.venv\Scripts\activate #Windows
+.venv\Scripts\Activate.ps1 #Windows
 
 ```
 
