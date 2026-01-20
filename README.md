@@ -286,5 +286,7 @@ This project was developed independently using public data and is intended to de
 ## Contact
 
 NuMetriq LLC -- Public-sector and operational analytics
+
 Email: kentrb@numetriq.org
+
 Website: numetriq.org
