@@ -1,6 +1,6 @@
 # Sarpy County Zoning Parcel Dashboard
 
-![Status](https://img.shiels.io/badge/status-public%20release-green)
+![Status](https://img.shields.io/badge/status-public%20release-green)
 
 A reproducible GIS analytics pipeline and interactive dashboard that shows how parcels are distributed across zoning districts within Sarpy County, Nebraska and its municipalities.
 
