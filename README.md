@@ -1,10 +1,10 @@
-# Sarpy County Zoning Parcel Dashboard
+# Sarpy Zoning Parcel Dashboard
 
 ![Status](https://img.shields.io/badge/status-public%20release-green)
 
 A reproducible GIS analytics pipeline and interactive dashboard that shows how parcels are distributed across zoning districts within Sarpy County, Nebraska and its municipalities.
 
-This project uses publicly available ArcGIS GIS data published by Sarpy County to demonstrate an end-to-end workflow: ingestion, validation, spatial joins, geometry repair, aggregation, and visualization.
+This project uses publicly available ArcGIS data published by Sarpy County to demonstrate an end-to-end workflow: ingestion, validation, spatial joins, geometry repair, aggregation, and visualization.
 
 **Built by NuMetriq LLC** using publicly available Sarpy County GIS data.
 
@@ -101,6 +101,11 @@ All data used in this project is publicly available.
 No proprietary or restricted data is used.
 
 
+### Data Disclaimer
+
+This project reflects the structure of the published GIS datasets at the time of ingestion.
+Parcel counts and zoning boundaries are subject to change as source data is updated by the county.
+
 
 ## Technical Overview
 
@@ -126,6 +131,7 @@ No proprietary or restricted data is used.
 
 
 ```text
+sarpy-zoning-parcel-dashboard/
 ├── data/
 │   ├── raw/                # Raw GeoJSON pulled from ArcGIS
 │   └── processed/          # Cleaned Parquet datasets
@@ -152,11 +158,9 @@ Raw and processed GIS datasets are intentionally excluded from version control a
 
 ### 1) Clone the repository
 
-```bash
-
+```powershell
 git clone https://github.com/NuMetriq/sarpy-zoning-parcel-dashboard.git
 cd sarpy-zoning-parcel-dashboard
-
 ```
 
 ### 2) Create and activate a virtual environment
@@ -164,53 +168,56 @@ cd sarpy-zoning-parcel-dashboard
 ```powershell
 python -m venv .venv
 .venv\Scripts\Activate.ps1 #Windows
-
 ```
 
 ### 3) Install dependencies
 
-```bash
-
+```powershell
 pip install .
-
 ```
 
 ### 4) Configure environment variables
 
 Copy the example file:
 
-```bash
-
+```powershell
 cp .env.example .env
-
 ```
 
 Edit `.env` to include jurisdiction labels:
 
 ```ini
-
 JURISDICTION_LABELS=10:Bellevue,20:Gretna,30:La Vista,40:Papillion,50:Springfield,60:Unincorporated
-
 ```
 
 ### 5) Run the pipeline
 
-```bash
-
+```powershell
 python scripts/01_ingest_all.py
 python scripts/02_build_processed.py
 python scripts/04_build_spatial_joins.py
 python scripts/05_dedup_parcels_with_zoning.py
 python scripts/07_build_zoning_dissolve.py
-
 ```
 
 ### 6) Launch the dashboard
 
-```bash
-
+```powershell
 streamlit run src/opsdash/app/streamlit_app.py
+```
 
+## Quick Start
+
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install .
+python scripts/01_ingest_all.py
+python scripts/02_build_processed.py
+python scripts/04_build_spatial_joins.py
+python scripts/05_dedup_parcels_with_zoning.py
+python scripts/07_build_zoning_dissolve.py
+streamlit run src/opsdash/app/streamlit_app.py
 ```
 
 
@@ -259,6 +266,12 @@ This project was built to demonstrate:
 It is intentionally scoped to be useful, transparent, and extensible, rather than a toy visualization.
 
 
+## License
+
+This project is licensed under the MIT License.
+See the `LICENSE` file for details.
+
+
 ## About NuMetriq
 
 NuMetriq LLC builds transparent, reproducible analytics tools that help public-sector and SMB organizations turn complex data into clear operational insight.
@@ -269,3 +282,9 @@ Our work emphasizes:
 - auditable, decision-support workflows
 
 This project was developed independently using public data and is intended to demonstrate NuMetriq’s approach to applied analytics in a local-government context.
+
+## Contact
+
+NuMetriq LLC -- Public-sector and operational analytics
+Email: kentrb@numetriq.org
+Website: numetriq.org
