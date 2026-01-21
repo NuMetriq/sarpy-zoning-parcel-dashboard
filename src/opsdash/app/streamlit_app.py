@@ -56,36 +56,38 @@ def view_state_from_bounds(gdf: gpd.GeoDataFrame) -> pdk.ViewState:
     )
 
 
-def alpha_from_ratio(x: int, max_x: int) -> int:
-    """Return a semi-transparent alpha channel based on count intensity."""
-    if max_x <= 0:
-        max_x = 1
-    a = 60 + int(175 * (x / max_x))
-    return max(60, min(235, a))
-
-
 def add_fill_color(map_gdf: gpd.GeoDataFrame, *, metric_col: str) -> gpd.GeoDataFrame:
     """
-    Color polygons by the selected metric (count, acres, or percent).
-    Uses alpha intensity scaling.
+    Color polygons by selected metric using quantile bins (robust to skew/outliers).
+    Expects metric_col to be numeric and in display units (e.g., percent already * 100).
     """
     out = map_gdf.copy()
-
-    out[metric_col] = pd.to_numeric(out.get(metric_col, 0), errors="coerce").fillna(0)
+    vals = pd.to_numeric(out.get(metric_col, 0), errors="coerce").fillna(0.0)
 
     if out.empty:
         out["fill_color"] = []
         return out
 
-    max_val = float(out[metric_col].max() or 0.0)
-    if max_val <= 0:
-        max_val = 1.0
+    # If everything is the same, use a single color
+    if float(vals.max()) == float(vals.min()):
+        out["fill_color"] = [[120, 120, 120, 180]] * len(out)
+        return out
 
-    def to_alpha(val: float) -> int:
-        a = 60 + int(175 * (float(val) / max_val))
-        return max(60, min(235, a))
+    # Quantile binning (0..5). duplicates="drop" avoids errors when many ties.
+    bins = pd.qcut(vals.rank(method="average"), q=6, labels=False, duplicates="drop")
+    bins = bins.fillna(0).astype(int)
 
-    out["fill_color"] = out[metric_col].apply(lambda v: [30, 120, 200, to_alpha(v)])
+    # 6-step ramp (very visible). Light -> Dark.
+    palette = [
+        [247, 252, 245, 200],
+        [199, 233, 192, 200],
+        [116, 196, 118, 200],
+        [49, 163, 84, 200],
+        [0, 109, 44, 200],
+        [0, 68, 27, 200],
+    ]
+
+    out["fill_color"] = bins.apply(lambda b: palette[min(int(b), len(palette) - 1)])
     return out
 
 
@@ -206,8 +208,8 @@ def build_tooltip(has_desc: bool, *, metric_short_label: str, metric_unit: str) 
         html = (
             "<b>Zoning:</b> {zoning_label}<br/>"
             "<b>Description:</b> {zoning_desc}<br/>"
-            + metric_line +
-            "<b>Parcels:</b> {parcel_count}<br/>"
+            + metric_line
+            + "<b>Parcels:</b> {parcel_count}<br/>"
             "<b>Total parcel acres:</b> {total_parcel_area_acres}<br/>"
             "<b>Median parcel acres:</b> {median_parcel_area_acres}<br/>"
             "<b>Zoning acres:</b> {zoning_area_acres}<br/>"
@@ -216,8 +218,8 @@ def build_tooltip(has_desc: bool, *, metric_short_label: str, metric_unit: str) 
     else:
         html = (
             "<b>Zoning:</b> {zoning_label}<br/>"
-            + metric_line +
-            "<b>Parcels:</b> {parcel_count}<br/>"
+            + metric_line
+            + "<b>Parcels:</b> {parcel_count}<br/>"
             "<b>Total parcel acres:</b> {total_parcel_area_acres}<br/>"
             "<b>Median parcel acres:</b> {median_parcel_area_acres}<br/>"
             "<b>Zoning acres:</b> {zoning_area_acres}<br/>"
@@ -225,6 +227,16 @@ def build_tooltip(has_desc: bool, *, metric_short_label: str, metric_unit: str) 
         )
 
     return {"html": html, "style": {"backgroundColor": "white", "color": "black"}}
+
+
+def df_to_csv_bytes(df: pd.DataFrame) -> bytes:
+    """Convert a DataFrame to CSV bytes (UTF-8) for Streamlit downloads."""
+    return df.to_csv(index=False).encode("utf-8")
+
+
+def make_safe_filename(s: str) -> str:
+    """Make a safe-ish filename token."""
+    return "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in s).strip("_")
 
 
 # -------------------------------------------------------------------
@@ -236,7 +248,7 @@ def main() -> None:
     st.set_page_config(page_title="Sarpy County Zoning Dashboard", layout="wide")
     st.title("Sarpy County Zoning Dashboard")
     st.caption(
-        "Parcels joined to zoning districts; map colors by parcel count. "
+        "Parcels joined to zoning districts; choropleth can be driven by count, area, percent, or density/intensity metrics. "
         "Table includes parcel-area and zoning-area metrics."
     )
 
@@ -260,6 +272,9 @@ def main() -> None:
         "Total parcel area (acres)": ("total_parcel_area_acres", "Parcel acres", "acres"),
         "Zoning polygon area (acres)": ("zoning_area_acres", "Zoning acres", "acres"),
         "% of jurisdiction land area": ("pct_jurisdiction_land_area", "% jur land", "percent"),
+        "Parcel density (parcels / zoning acre)": ("parcels_per_zoning_acre", "Parcels per acre", "rate"),
+        "Parcel intensity (parcel acres / zoning acre)": ("parcel_acres_per_zoning_acre", "Acres per acre", "rate"),
+        "Median parcel size (acres)": ("median_parcel_area_acres", "Median parcel acres", "acres"),
     }
 
     metric_label = st.sidebar.radio(
@@ -323,9 +338,28 @@ def main() -> None:
     map_gdf = map_gdf.merge(zoning_area, on="zoning_label", how="left")
 
     map_gdf["parcel_count"] = map_gdf["parcel_count"].fillna(0).astype(int)
-    for c in ("total_parcel_area_acres", "median_parcel_area_acres", "zoning_area_acres", "pct_jurisdiction_land_area"):
+    for c in (
+        "total_parcel_area_acres",
+        "median_parcel_area_acres",
+        "zoning_area_acres",
+        "pct_jurisdiction_land_area",
+    ):
         if c in map_gdf.columns:
             map_gdf[c] = map_gdf[c].fillna(0.0).astype(float)
+
+    denom = map_gdf["zoning_area_acres"].replace(0.0, pd.NA)
+
+    # parcels per zoning acre (density)
+    map_gdf["parcels_per_zoning_acre"] = (map_gdf["parcel_count"] / denom).fillna(0.0)
+
+    # parcel acres per zoning acre (intensity proxy)
+    map_gdf["parcel_acres_per_zoning_acre"] = (map_gdf["total_parcel_area_acres"] / denom).fillna(0.0)
+
+    # Ensure choropleth metric is in display units
+    if metric_col == "pct_jurisdiction_land_area":
+        map_gdf["metric_for_color"] = map_gdf["pct_jurisdiction_land_area"] * 100.0
+    else:
+        map_gdf["metric_for_color"] = pd.to_numeric(map_gdf.get(metric_col, 0), errors="coerce").fillna(0.0)
 
     # KPIs (single 4-column row)
     total_parcels = int(parcels_f["parcel_id"].nunique()) if "parcel_id" in parcels_f.columns else len(parcels_f)
@@ -353,13 +387,15 @@ def main() -> None:
         # Start from the full non-geometry table
         table_df = map_gdf.drop(columns="geometry", errors="ignore").copy()
 
-        # Derived display column (percent)
+        # Display percent
         table_df["pct_jurisdiction_land_area_pct"] = (table_df["pct_jurisdiction_land_area"] * 100).round(2)
 
-        # Round other display fields
+        # Round display fields
         table_df["total_parcel_area_acres"] = table_df["total_parcel_area_acres"].round(2)
         table_df["median_parcel_area_acres"] = table_df["median_parcel_area_acres"].round(3)
         table_df["zoning_area_acres"] = table_df["zoning_area_acres"].round(2)
+        table_df["parcels_per_zoning_acre"] = table_df["parcels_per_zoning_acre"].round(4)
+        table_df["parcel_acres_per_zoning_acre"] = table_df["parcel_acres_per_zoning_acre"].round(4)
 
         cols = [
             "zoning_label",
@@ -368,11 +404,13 @@ def main() -> None:
             "median_parcel_area_acres",
             "zoning_area_acres",
             "pct_jurisdiction_land_area_pct",
+            "parcels_per_zoning_acre",
+            "parcel_acres_per_zoning_acre",
         ]
         if "zoning_desc" in table_df.columns:
             cols.insert(1, "zoning_desc")
 
-        # Sort by selected metric (mapping pct to pct-display column)
+        # Sort by selected metric
         sort_col = metric_col
         if sort_col == "pct_jurisdiction_land_area":
             sort_col = "pct_jurisdiction_land_area_pct"
@@ -383,25 +421,61 @@ def main() -> None:
             height=700,
         )
 
+        st.subheader("Exports")
+
+        export_rollups = table_df[cols].copy()
+
+        parcel_cols = ["parcel_id", "zoning_code"]
+        if "zoning_desc" in parcels_f.columns:
+            parcel_cols.append("zoning_desc")
+        if "jurisdiction" in parcels_f.columns:
+            parcel_cols.append("jurisdiction")
+
+        export_parcels = parcels_f.drop(columns="geometry", errors="ignore")[parcel_cols].copy()
+        export_parcels["zoning_code"] = export_parcels["zoning_code"].astype(str)
+
+        rollups_name = make_safe_filename(metric_label.lower())
+        if selected_jurisdictions is None:
+            jur_token = "all_jurisdictions"
+        else:
+            jur_token = "jur_" + "_".join(map(str, selected_jurisdictions))
+
+        rollups_filename = f"zoning_rollups_{jur_token}_{rollups_name}.csv"
+        parcels_filename = f"parcels_filtered_{jur_token}.csv"
+
+        st.caption(f"Rollups rows: {len(export_rollups):,} • Parcels rows: {len(export_parcels):,}")
+
+        st.download_button(
+            label="Download zoning rollups (CSV)",
+            data=df_to_csv_bytes(export_rollups),
+            file_name=rollups_filename,
+            mime="text/csv",
+            help="Exports the rollup table shown above, reflecting current filters and metrics.",
+        )
+
+        st.download_button(
+            label="Download filtered parcels (CSV)",
+            data=df_to_csv_bytes(export_parcels),
+            file_name=parcels_filename,
+            mime="text/csv",
+            help="Exports parcel IDs and zoning codes for the current filter selection.",
+        )
+
         st.caption("Tip: % jur land is based on dissolved zoning polygon area within the selected jurisdiction(s).")
 
     with left:
         st.subheader(f"Choropleth: {metric_label} by Zoning")
 
-        map_gdf = add_fill_color(map_gdf, metric_col=metric_col)
+        # Fill colors based on metric_for_color (display units)
+        map_gdf = add_fill_color(map_gdf, metric_col="metric_for_color")
 
-        # Make tooltip fields human-friendly (rounding + percent)
+        # Tooltip fields
         map_gdf["total_parcel_area_acres"] = map_gdf["total_parcel_area_acres"].round(2)
         map_gdf["median_parcel_area_acres"] = map_gdf["median_parcel_area_acres"].round(3)
         map_gdf["zoning_area_acres"] = map_gdf["zoning_area_acres"].round(2)
-        map_gdf["pct_jurisdiction_land_area"] = map_gdf["pct_jurisdiction_land_area"].round(4)
         map_gdf["pct_jurisdiction_land_area_pct"] = (map_gdf["pct_jurisdiction_land_area"] * 100).round(2)
 
-        # Add a display field for the selected metric (so tooltip is clear)
-        if metric_col == "pct_jurisdiction_land_area":
-            map_gdf["metric_value"] = (map_gdf[metric_col] * 100).round(2)
-        else:
-            map_gdf["metric_value"] = map_gdf[metric_col].round(2)
+        map_gdf["metric_value"] = pd.to_numeric(map_gdf["metric_for_color"], errors="coerce").fillna(0.0).round(2)
 
         geojson = json.loads(map_gdf.to_json())
 
@@ -430,16 +504,42 @@ def main() -> None:
             map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
         )
 
-        st.pydeck_chart(deck, use_container_width=True)
+        st.pydeck_chart(deck, use_container_width=True, key=f"map-{metric_label}")
+
+        st.caption(
+            "Note: 'Zoning polygon area' and '% of jurisdiction land area' are equivalent scalings, so they will look identical."
+        )
 
     with st.expander("Debug"):
         st.write("Selected jurisdictions:", selected_jurisdictions)
         st.write("Zoning polygons (filtered):", len(zoning_f))
         st.write("Dissolved zoning codes:", len(zoning_diss))
-        st.write("Max parcel_count:", int(map_gdf["parcel_count"].max() or 0))
-        st.write(map_gdf[["zoning_label", "parcel_count"]].sort_values("parcel_count", ascending=False).head(10))
-        if selected_jurisdictions is not None:
-            st.write("Jurisdiction labels:", {j: labels.get(j, f"Jurisdiction {j}") for j in selected_jurisdictions})
+        st.write("Selected metric:", metric_col)
+
+        metric_cols = [
+            "parcel_count",
+            "total_parcel_area_acres",
+            "median_parcel_area_acres",
+            "zoning_area_acres",
+            "pct_jurisdiction_land_area",
+            "parcels_per_zoning_acre",
+            "parcel_acres_per_zoning_acre",
+        ]
+
+        st.write("Metric summary:")
+        st.dataframe(map_gdf[metric_cols].describe().T)
+
+        rank_df = map_gdf.set_index("zoning_label")[metric_cols].rank(method="average")
+        st.write("Rank correlation (1.0 = identical ordering):")
+        st.dataframe(rank_df.corr())
+
+        st.write("Metric_for_color min/max:", float(map_gdf["metric_for_color"].min()), float(map_gdf["metric_for_color"].max()))
+        st.dataframe(
+            map_gdf[["zoning_label", "metric_for_color", "fill_color"]]
+            .sort_values("metric_for_color", ascending=False)
+            .head(10)
+            .reset_index(drop=True)
+        )
 
     st.divider()
     st.caption(
