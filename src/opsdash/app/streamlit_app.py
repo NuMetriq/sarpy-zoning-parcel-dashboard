@@ -4,14 +4,13 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 import geopandas as gpd
 import pandas as pd
 import pydeck as pdk
 import streamlit as st
 
-# Reuse shared utilities to avoid repetition across scripts + app
 from opsdash.common import Paths, configure_logging, ensure_crs, repair_geometry
 
 LOGGER = logging.getLogger(__name__)
@@ -21,6 +20,7 @@ LOGGER = logging.getLogger(__name__)
 # -------------------------------------------------------------------
 WGS84_EPSG = 4326
 WORK_CRS_EPSG = 26914  # UTM 14N (good for Sarpy County geometry ops)
+M2_TO_ACRES = 0.0002471053814671653  # exact conversion
 
 PATHS = Paths()
 PARCELS_PATH = PATHS.processed_dir / "parcels_with_zoning_1to1.parquet"
@@ -32,9 +32,7 @@ ZONING_RAW_PATH = PATHS.processed_dir / "zoning.parquet"  # raw polygons (has ju
 # -------------------------------------------------------------------
 @st.cache_data(show_spinner=True)
 def load_gdf_parquet(path: Path, mtime: float, epsg: int = WGS84_EPSG) -> gpd.GeoDataFrame:
-    """
-    Cached reader for GeoParquet. `mtime` is part of the cache key.
-    """
+    """Cached reader for GeoParquet. `mtime` is part of the cache key."""
     gdf = gpd.read_parquet(path)
     return ensure_crs(gdf, epsg)
 
@@ -59,9 +57,7 @@ def view_state_from_bounds(gdf: gpd.GeoDataFrame) -> pdk.ViewState:
 
 
 def alpha_from_ratio(x: int, max_x: int) -> int:
-    """
-    Return a semi-transparent alpha channel based on count intensity.
-    """
+    """Return a semi-transparent alpha channel based on count intensity."""
     if max_x <= 0:
         max_x = 1
     a = 60 + int(175 * (x / max_x))
@@ -69,6 +65,9 @@ def alpha_from_ratio(x: int, max_x: int) -> int:
 
 
 def add_fill_color(map_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """
+    Color polygons by parcel_count (v1.1.0 Issue #2 will add metric toggle).
+    """
     out = map_gdf.copy()
     out["parcel_count"] = pd.to_numeric(out.get("parcel_count", 0), errors="coerce").fillna(0).astype(int)
 
@@ -77,7 +76,9 @@ def add_fill_color(map_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         return out
 
     max_count = int(out["parcel_count"].max() or 1)
-    out["fill_color"] = out["parcel_count"].apply(lambda x: [30, 120, 200, alpha_from_ratio(int(x), max_count)])
+    out["fill_color"] = out["parcel_count"].apply(
+        lambda x: [30, 120, 200, alpha_from_ratio(int(x), max_count)]
+    )
     return out
 
 
@@ -119,12 +120,10 @@ def dissolve_zoning_by_code(zoning_filtered: gpd.GeoDataFrame) -> gpd.GeoDataFra
 
     z = ensure_crs(z, WGS84_EPSG)
 
-    # Keep one description per label (before dissolve)
     desc_lookup = None
     if "zoning_desc" in z.columns:
         desc_lookup = z[["zoning_label", "zoning_desc"]].dropna().drop_duplicates("zoning_label")
 
-    # Robust union in projected CRS
     z_work = z.to_crs(WORK_CRS_EPSG)
     z_work = repair_geometry(z_work)
 
@@ -139,39 +138,84 @@ def dissolve_zoning_by_code(zoning_filtered: gpd.GeoDataFrame) -> gpd.GeoDataFra
 
 def compute_rollups(parcels_filtered: gpd.GeoDataFrame) -> pd.DataFrame:
     """
-    Roll up unique parcel counts by zoning_code.
+    Roll up unique parcel counts + parcel area metrics by zoning_code.
+    Parcel areas are computed in EPSG:26914 for accurate area calculations.
     """
-    required = {"parcel_id", "zoning_code"}
+    required = {"parcel_id", "zoning_code", "geometry"}
     missing = required - set(parcels_filtered.columns)
     if missing:
         raise ValueError(f"Parcels missing required columns: {sorted(missing)}")
 
-    rollups = (
-        parcels_filtered.dropna(subset=["zoning_code"])
-        .groupby("zoning_code")["parcel_id"]
-        .nunique()
-        .reset_index()
-        .rename(columns={"zoning_code": "zoning_label", "parcel_id": "parcel_count"})
-    )
-    rollups["zoning_label"] = rollups["zoning_label"].astype(str)
-    rollups["parcel_count"] = rollups["parcel_count"].astype(int)
-    return rollups
+    df = parcels_filtered.dropna(subset=["zoning_code"]).copy()
+
+    df_area = df.to_crs(WORK_CRS_EPSG)
+    df_area["parcel_area_m2"] = df_area.geometry.area
+
+    grp = df_area.groupby(df_area["zoning_code"].astype(str), dropna=False)
+
+    out = pd.DataFrame(
+        {
+            "zoning_label": grp["zoning_code"].first().astype(str),
+            "parcel_count": grp["parcel_id"].nunique(),
+            "total_parcel_area_acres": grp["parcel_area_m2"].sum() * M2_TO_ACRES,
+            "median_parcel_area_acres": grp["parcel_area_m2"].median() * M2_TO_ACRES,
+        }
+    ).reset_index(drop=True)
+
+    out["parcel_count"] = out["parcel_count"].astype(int)
+    out["total_parcel_area_acres"] = out["total_parcel_area_acres"].astype(float)
+    out["median_parcel_area_acres"] = out["median_parcel_area_acres"].astype(float)
+
+    return out
+
+
+def compute_zoning_area_shares(zoning_dissolved: gpd.GeoDataFrame) -> pd.DataFrame:
+    """
+    Compute zoning polygon area (acres) and share of jurisdiction land area
+    using dissolved zoning polygons (already filtered by jurisdiction).
+    """
+    if zoning_dissolved.empty:
+        return pd.DataFrame(columns=["zoning_label", "zoning_area_acres", "pct_jurisdiction_land_area"])
+
+    if "zoning_label" not in zoning_dissolved.columns:
+        raise ValueError("Expected 'zoning_label' on dissolved zoning GeoDataFrame.")
+
+    z = zoning_dissolved.copy()
+    z_area = z.to_crs(WORK_CRS_EPSG)
+    z_area["zoning_area_m2"] = z_area.geometry.area
+    z_area["zoning_area_acres"] = z_area["zoning_area_m2"] * M2_TO_ACRES
+
+    total_acres = float(z_area["zoning_area_acres"].sum() or 0.0)
+    z_area["pct_jurisdiction_land_area"] = (z_area["zoning_area_acres"] / total_acres) if total_acres > 0 else 0.0
+
+    return z_area[["zoning_label", "zoning_area_acres", "pct_jurisdiction_land_area"]].copy()
 
 
 def build_tooltip(has_desc: bool) -> dict[str, Any]:
+    """
+    Tooltip shows both count and area metrics (Issue #1).
+    """
     if has_desc:
         html = (
             "<b>Zoning:</b> {zoning_label}<br/>"
             "<b>Description:</b> {zoning_desc}<br/>"
-            "<b>Parcels:</b> {parcel_count}"
+            "<b>Parcels:</b> {parcel_count}<br/>"
+            "<b>Total parcel acres:</b> {total_parcel_area_acres}<br/>"
+            "<b>Median parcel acres:</b> {median_parcel_area_acres}<br/>"
+            "<b>Zoning acres:</b> {zoning_area_acres}<br/>"
+            "<b>% jur land:</b> {pct_jurisdiction_land_area}%"
         )
     else:
-        html = "<b>Zoning:</b> {zoning_label}<br/><b>Parcels:</b> {parcel_count}"
+        html = (
+            "<b>Zoning:</b> {zoning_label}<br/>"
+            "<b>Parcels:</b> {parcel_count}<br/>"
+            "<b>Total parcel acres:</b> {total_parcel_area_acres}<br/>"
+            "<b>Median parcel acres:</b> {median_parcel_area_acres}<br/>"
+            "<b>Zoning acres:</b> {zoning_area_acres}<br/>"
+            "<b>% jur land:</b> {pct_jurisdiction_land_area}%"
+        )
 
-    return {
-        "html": html,
-        "style": {"backgroundColor": "white", "color": "black"},
-    }
+    return {"html": html, "style": {"backgroundColor": "white", "color": "black"}}
 
 
 # -------------------------------------------------------------------
@@ -182,7 +226,10 @@ def main() -> None:
 
     st.set_page_config(page_title="Sarpy County Zoning Dashboard", layout="wide")
     st.title("Sarpy County Zoning Dashboard")
-    st.caption("Parcels joined to zoning districts; choropleth shows parcel concentration by zoning code.")
+    st.caption(
+        "Parcels joined to zoning districts; map colors by parcel count. "
+        "Table includes parcel-area and zoning-area metrics."
+    )
 
     must_exist(
         PARCELS_PATH,
@@ -246,14 +293,22 @@ def main() -> None:
     zoning_diss["zoning_label"] = zoning_diss["zoning_label"].astype(str)
 
     map_gdf = zoning_diss.merge(rollups, on="zoning_label", how="left")
+
+    zoning_area = compute_zoning_area_shares(zoning_diss)
+    map_gdf = map_gdf.merge(zoning_area, on="zoning_label", how="left")
+
     map_gdf["parcel_count"] = map_gdf["parcel_count"].fillna(0).astype(int)
+    for c in ("total_parcel_area_acres", "median_parcel_area_acres", "zoning_area_acres", "pct_jurisdiction_land_area"):
+        if c in map_gdf.columns:
+            map_gdf[c] = map_gdf[c].fillna(0.0).astype(float)
 
-    # KPIs
+    # KPIs (single 4-column row)
     total_parcels = int(parcels_f["parcel_id"].nunique()) if "parcel_id" in parcels_f.columns else len(parcels_f)
-    matched_parcels = int(parcels_f["zoning_code"].notna().sum()) if "zoning_code" in parcels_f.columns else 0
+    matched_parcels = int(parcels_f["zoning_code"].notna().sum())
     unique_zones = int(rollups["zoning_label"].nunique())
+    total_jur_acres = float(map_gdf["zoning_area_acres"].sum() or 0.0)
 
-    k1, k2, k3 = st.columns(3)
+    k1, k2, k3, k4 = st.columns(4)
     k1.metric("Parcels (filtered)", f"{total_parcels:,}")
     k2.metric(
         "Parcels w/ Zoning",
@@ -261,6 +316,7 @@ def main() -> None:
         f"{(matched_parcels / total_parcels):.2%}" if total_parcels else "0%",
     )
     k3.metric("Zoning Codes (filtered)", f"{unique_zones:,}")
+    k4.metric("Jurisdiction Land Area (acres)", f"{total_jur_acres:,.1f}")
 
     st.divider()
 
@@ -268,23 +324,43 @@ def main() -> None:
 
     with right:
         st.subheader("Top Zoning Codes")
-        cols = ["zoning_label", "parcel_count"]
+
+        cols = [
+            "zoning_label",
+            "parcel_count",
+            "total_parcel_area_acres",
+            "median_parcel_area_acres",
+            "zoning_area_acres",
+            "pct_jurisdiction_land_area",
+        ]
         if "zoning_desc" in map_gdf.columns:
-            cols = ["zoning_label", "zoning_desc", "parcel_count"]
+            cols.insert(1, "zoning_desc")
+
+        table_df = map_gdf.drop(columns="geometry", errors="ignore")[cols].copy()
+        table_df["total_parcel_area_acres"] = table_df["total_parcel_area_acres"].round(2)
+        table_df["median_parcel_area_acres"] = table_df["median_parcel_area_acres"].round(3)
+        table_df["zoning_area_acres"] = table_df["zoning_area_acres"].round(2)
+        table_df["pct_jurisdiction_land_area"] = (table_df["pct_jurisdiction_land_area"] * 100).round(2)
 
         st.dataframe(
-            map_gdf.drop(columns="geometry", errors="ignore")[cols]
-            .sort_values("parcel_count", ascending=False)
-            .head(25)
-            .reset_index(drop=True),
+            table_df.sort_values("parcel_count", ascending=False).head(25).reset_index(drop=True),
             use_container_width=True,
             height=700,
         )
 
+        st.caption("Tip: % jur land is based on dissolved zoning polygon area within the selected jurisdiction(s).")
+
     with left:
-        st.subheader("Choropleth: Parcel Count by Zoning")
+        st.subheader("Choropleth: Parcel Count by Zoning (Issue #2 will add metric toggle)")
 
         map_gdf = add_fill_color(map_gdf)
+
+        # Make tooltip fields human-friendly (rounding + percent)
+        map_gdf["total_parcel_area_acres"] = map_gdf["total_parcel_area_acres"].round(2)
+        map_gdf["median_parcel_area_acres"] = map_gdf["median_parcel_area_acres"].round(3)
+        map_gdf["zoning_area_acres"] = map_gdf["zoning_area_acres"].round(2)
+        map_gdf["pct_jurisdiction_land_area"] = (map_gdf["pct_jurisdiction_land_area"] * 100).round(2)
+
         geojson = json.loads(map_gdf.to_json())
 
         layer = pdk.Layer(
@@ -317,15 +393,13 @@ def main() -> None:
         st.write("Max parcel_count:", int(map_gdf["parcel_count"].max() or 0))
         st.write(map_gdf[["zoning_label", "parcel_count"]].sort_values("parcel_count", ascending=False).head(10))
         if selected_jurisdictions is not None:
-            st.write(
-                "Jurisdiction labels:",
-                {j: labels.get(j, f"Jurisdiction {j}") for j in selected_jurisdictions},
-            )
+            st.write("Jurisdiction labels:", {j: labels.get(j, f"Jurisdiction {j}") for j in selected_jurisdictions})
 
     st.divider()
     st.caption(
-        "Notes: Counts are computed from parcels_with_zoning_1to1.parquet and filtered to the selected jurisdiction(s). "
-        "Zoning polygons are dissolved within the filter to keep the map readable."
+        "Notes: Parcel rollups are computed from parcels_with_zoning_1to1.parquet and filtered to selected jurisdiction(s). "
+        "Zoning polygons are dissolved within the filter to keep the map readable. "
+        "Areas are computed in a projected CRS (EPSG:26914) for accuracy."
     )
 
 
