@@ -1,28 +1,47 @@
+"""
+Audit ArcGIS layer fields
+"""
+from __future__ import annotations
+
+import logging
 import os
-from dotenv import load_dotenv
+from typing import Any
+
 import requests
+from dotenv import load_dotenv
 
-load_dotenv()
+from opsdash.common import configure_logging
 
-def post_json(url: str, data: dict, timeout: int = 60) -> dict:
-    r = requests.post(url, data=data, timeout=timeout)
-    r.raise_for_status()
-    return r.json()
+LOGGER = logging.getLogger(__name__)
+DEFAULT_TIMEOUT_S = 60
 
-def main():
-    url = os.getenv("SARPY_ZONING_LAYER_URL", "")
+
+def post_form(url: str, data: dict[str, Any], timeout_s: int = DEFAULT_TIMEOUT_S) -> dict[str, Any]:
+    resp = requests.post(url, data=data, timeout=timeout_s)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def main() -> int:
+    configure_logging()
+    load_dotenv()
+
+    url = os.getenv("SARPY_ZONING_LAYER_URL", "").strip()
     if not url:
         raise ValueError("Set SARPY_ZONING_LAYER_URL in .env")
 
-    meta = post_json(url, {"f": "pjson"})
-    fields = meta.get("fields", [])
+    meta = post_form(url, {"f": "pjson"})
+    fields = meta.get("fields", []) or []
 
-    print("Layer:", meta.get("name"))
-    print("Geometry:", meta.get("geometryType"))
-    print("Field count:", len(fields))
-    print("\nFields:")
+    LOGGER.info("Layer: %s", meta.get("name"))
+    LOGGER.info("Geometry: %s", meta.get("geometryType"))
+    LOGGER.info("Field count: %s", len(fields))
+
     for f in fields:
-        print(f"  {f.get('name')}  ({f.get('type')})")
+        LOGGER.info("  %s (%s)", f.get("name"), f.get("type"))
+
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

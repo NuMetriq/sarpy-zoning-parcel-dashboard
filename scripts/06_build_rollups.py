@@ -1,34 +1,50 @@
-from pathlib import Path
-import pandas as pd
+"""
+Build zoning rollups from deduplicated parcels with zoning.
+"""
+from __future__ import annotations
+
+import logging
+
 import geopandas as gpd
+import pandas as pd
 
-PROCESSED_DIR = Path("data/processed")
+from opsdash.common import Paths, configure_logging
 
-def main():
-    inp = PROCESSED_DIR / "parcels_with_zoning_1to1.parquet"
-    if not inp.exists():
-        raise FileNotFoundError(f"Missing {inp}")
+LOGGER = logging.getLogger(__name__)
 
-    gdf = gpd.read_parquet(inp)
 
-    if "zoning_id" not in gdf.columns:
-        raise ValueError("Expected zoning_id in parcels_with_zoning_1to1.parquet")
+def main() -> int:
+    configure_logging()
+    paths = Paths()
 
-    # roll up by zoning_id only
+    in_path = paths.processed_dir / "parcels_with_zoning_1to1.parquet"
+    out_path = paths.processed_dir / "zoning_rollups.csv"
+
+    if not in_path.exists():
+        raise FileNotFoundError(f"Missing {in_path}. Run scripts/05_dedup_parcels_with_zoning.py first.")
+
+    gdf = gpd.read_parquet(in_path)
+
+    required = {"parcel_id", "zoning_id"}
+    missing = required - set(gdf.columns)
+    if missing:
+        raise ValueError(f"Missing required columns in {in_path.name}: {sorted(missing)}")
+
     grp = gdf.groupby("zoning_id", dropna=False)
+    out = (
+        pd.DataFrame(
+            {
+                "zoning_label": grp["zoning_id"].first(),
+                "parcel_count": grp["parcel_id"].nunique(),
+            }
+        )
+        .reset_index(drop=True)
+    )
 
-    out = pd.DataFrame({
-        "zoning_label": grp["zoning_id"].first(),        # keep column name expected by app
-        "parcel_count": grp["parcel_id"].nunique(),
-    }).reset_index(drop=True)
-
-    out_path = PROCESSED_DIR / "zoning_rollups.csv"
     out.to_csv(out_path, index=False)
+    LOGGER.info("Wrote: %s", out_path)
+    return 0
 
-    print(f"Wrote: {out_path}")
-    print(f"Rows (zoning groups): {len(out):,}")
-    print("Top 10 zoning_id by parcel_count:")
-    print(out.sort_values("parcel_count", ascending=False).head(10))
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
