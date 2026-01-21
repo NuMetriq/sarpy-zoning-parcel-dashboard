@@ -64,21 +64,28 @@ def alpha_from_ratio(x: int, max_x: int) -> int:
     return max(60, min(235, a))
 
 
-def add_fill_color(map_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+def add_fill_color(map_gdf: gpd.GeoDataFrame, *, metric_col: str) -> gpd.GeoDataFrame:
     """
-    Color polygons by parcel_count (v1.1.0 Issue #2 will add metric toggle).
+    Color polygons by the selected metric (count, acres, or percent).
+    Uses alpha intensity scaling.
     """
     out = map_gdf.copy()
-    out["parcel_count"] = pd.to_numeric(out.get("parcel_count", 0), errors="coerce").fillna(0).astype(int)
+
+    out[metric_col] = pd.to_numeric(out.get(metric_col, 0), errors="coerce").fillna(0)
 
     if out.empty:
         out["fill_color"] = []
         return out
 
-    max_count = int(out["parcel_count"].max() or 1)
-    out["fill_color"] = out["parcel_count"].apply(
-        lambda x: [30, 120, 200, alpha_from_ratio(int(x), max_count)]
-    )
+    max_val = float(out[metric_col].max() or 0.0)
+    if max_val <= 0:
+        max_val = 1.0
+
+    def to_alpha(val: float) -> int:
+        a = 60 + int(175 * (float(val) / max_val))
+        return max(60, min(235, a))
+
+    out["fill_color"] = out[metric_col].apply(lambda v: [30, 120, 200, to_alpha(v)])
     return out
 
 
@@ -191,28 +198,30 @@ def compute_zoning_area_shares(zoning_dissolved: gpd.GeoDataFrame) -> pd.DataFra
     return z_area[["zoning_label", "zoning_area_acres", "pct_jurisdiction_land_area"]].copy()
 
 
-def build_tooltip(has_desc: bool) -> dict[str, Any]:
-    """
-    Tooltip shows both count and area metrics (Issue #1).
-    """
+def build_tooltip(has_desc: bool, *, metric_short_label: str, metric_unit: str) -> dict[str, Any]:
+    unit_suffix = "%" if metric_unit == "percent" else (" acres" if metric_unit == "acres" else "")
+    metric_line = f"<b>{metric_short_label}:</b> {{metric_value}}{unit_suffix}<br/>"
+
     if has_desc:
         html = (
             "<b>Zoning:</b> {zoning_label}<br/>"
             "<b>Description:</b> {zoning_desc}<br/>"
+            + metric_line +
             "<b>Parcels:</b> {parcel_count}<br/>"
             "<b>Total parcel acres:</b> {total_parcel_area_acres}<br/>"
             "<b>Median parcel acres:</b> {median_parcel_area_acres}<br/>"
             "<b>Zoning acres:</b> {zoning_area_acres}<br/>"
-            "<b>% jur land:</b> {pct_jurisdiction_land_area}%"
+            "<b>% jur land:</b> {pct_jurisdiction_land_area_pct}%"
         )
     else:
         html = (
             "<b>Zoning:</b> {zoning_label}<br/>"
+            + metric_line +
             "<b>Parcels:</b> {parcel_count}<br/>"
             "<b>Total parcel acres:</b> {total_parcel_area_acres}<br/>"
             "<b>Median parcel acres:</b> {median_parcel_area_acres}<br/>"
             "<b>Zoning acres:</b> {zoning_area_acres}<br/>"
-            "<b>% jur land:</b> {pct_jurisdiction_land_area}%"
+            "<b>% jur land:</b> {pct_jurisdiction_land_area_pct}%"
         )
 
     return {"html": html, "style": {"backgroundColor": "white", "color": "black"}}
@@ -245,6 +254,22 @@ def main() -> None:
 
     # Sidebar filters
     st.sidebar.header("Filters")
+
+    metric_options = {
+        "Parcel count": ("parcel_count", "Parcels", "count"),
+        "Total parcel area (acres)": ("total_parcel_area_acres", "Parcel acres", "acres"),
+        "Zoning polygon area (acres)": ("zoning_area_acres", "Zoning acres", "acres"),
+        "% of jurisdiction land area": ("pct_jurisdiction_land_area", "% jur land", "percent"),
+    }
+
+    metric_label = st.sidebar.radio(
+        "Choropleth metric",
+        options=list(metric_options.keys()),
+        index=0,
+        help="Choose which metric drives map shading and table sorting.",
+    )
+
+    metric_col, metric_short_label, metric_unit = metric_options[metric_label]
 
     selected_jurisdictions: Optional[list[int]] = None
     labels: dict[int, str] = {}
@@ -325,25 +350,35 @@ def main() -> None:
     with right:
         st.subheader("Top Zoning Codes")
 
+        # Start from the full non-geometry table
+        table_df = map_gdf.drop(columns="geometry", errors="ignore").copy()
+
+        # Derived display column (percent)
+        table_df["pct_jurisdiction_land_area_pct"] = (table_df["pct_jurisdiction_land_area"] * 100).round(2)
+
+        # Round other display fields
+        table_df["total_parcel_area_acres"] = table_df["total_parcel_area_acres"].round(2)
+        table_df["median_parcel_area_acres"] = table_df["median_parcel_area_acres"].round(3)
+        table_df["zoning_area_acres"] = table_df["zoning_area_acres"].round(2)
+
         cols = [
             "zoning_label",
             "parcel_count",
             "total_parcel_area_acres",
             "median_parcel_area_acres",
             "zoning_area_acres",
-            "pct_jurisdiction_land_area",
+            "pct_jurisdiction_land_area_pct",
         ]
-        if "zoning_desc" in map_gdf.columns:
+        if "zoning_desc" in table_df.columns:
             cols.insert(1, "zoning_desc")
 
-        table_df = map_gdf.drop(columns="geometry", errors="ignore")[cols].copy()
-        table_df["total_parcel_area_acres"] = table_df["total_parcel_area_acres"].round(2)
-        table_df["median_parcel_area_acres"] = table_df["median_parcel_area_acres"].round(3)
-        table_df["zoning_area_acres"] = table_df["zoning_area_acres"].round(2)
-        table_df["pct_jurisdiction_land_area"] = (table_df["pct_jurisdiction_land_area"] * 100).round(2)
+        # Sort by selected metric (mapping pct to pct-display column)
+        sort_col = metric_col
+        if sort_col == "pct_jurisdiction_land_area":
+            sort_col = "pct_jurisdiction_land_area_pct"
 
         st.dataframe(
-            table_df.sort_values("parcel_count", ascending=False).head(25).reset_index(drop=True),
+            table_df[cols].sort_values(sort_col, ascending=False).head(25).reset_index(drop=True),
             use_container_width=True,
             height=700,
         )
@@ -351,15 +386,22 @@ def main() -> None:
         st.caption("Tip: % jur land is based on dissolved zoning polygon area within the selected jurisdiction(s).")
 
     with left:
-        st.subheader("Choropleth: Parcel Count by Zoning (Issue #2 will add metric toggle)")
+        st.subheader(f"Choropleth: {metric_label} by Zoning")
 
-        map_gdf = add_fill_color(map_gdf)
+        map_gdf = add_fill_color(map_gdf, metric_col=metric_col)
 
         # Make tooltip fields human-friendly (rounding + percent)
         map_gdf["total_parcel_area_acres"] = map_gdf["total_parcel_area_acres"].round(2)
         map_gdf["median_parcel_area_acres"] = map_gdf["median_parcel_area_acres"].round(3)
         map_gdf["zoning_area_acres"] = map_gdf["zoning_area_acres"].round(2)
-        map_gdf["pct_jurisdiction_land_area"] = (map_gdf["pct_jurisdiction_land_area"] * 100).round(2)
+        map_gdf["pct_jurisdiction_land_area"] = map_gdf["pct_jurisdiction_land_area"].round(4)
+        map_gdf["pct_jurisdiction_land_area_pct"] = (map_gdf["pct_jurisdiction_land_area"] * 100).round(2)
+
+        # Add a display field for the selected metric (so tooltip is clear)
+        if metric_col == "pct_jurisdiction_land_area":
+            map_gdf["metric_value"] = (map_gdf[metric_col] * 100).round(2)
+        else:
+            map_gdf["metric_value"] = map_gdf[metric_col].round(2)
 
         geojson = json.loads(map_gdf.to_json())
 
@@ -380,7 +422,11 @@ def main() -> None:
         deck = pdk.Deck(
             layers=[layer],
             initial_view_state=view_state_from_bounds(map_gdf),
-            tooltip=build_tooltip(has_desc=("zoning_desc" in map_gdf.columns)),
+            tooltip=build_tooltip(
+                has_desc=("zoning_desc" in map_gdf.columns),
+                metric_short_label=metric_short_label,
+                metric_unit=metric_unit,
+            ),
             map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
         )
 
