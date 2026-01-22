@@ -3,7 +3,7 @@
 ![Status](https://img.shields.io/badge/status-public%20release-green)
 ![Release](https://img.shields.io/badge/release-v1.1.0-blue)
 
-A reproducible GIS analytics pipeline and interactive dashboard that shows how parcels are distributed across zoning districts within Sarpy County, Nebraska and its municipalities.
+A reproducible GIS analytics pipeline and interactive dashboard that characterizes how parcels are distributed across zoning districts within Sarpy County, Nebraska and its municipalities.
 
 This project uses publicly available ArcGIS data published by Sarpy County to demonstrate an end-to-end workflow: ingestion, validation, spatial joins, geometry repair, aggregation, and visualization.
 
@@ -22,6 +22,7 @@ This project provides:
 
 The goal is to demonstrate how public GIS data can be transformed into **decision-ready operational insight** using transparent, reproducible, open-source tooling.
 
+The emphasis is on **structural accuracy, auditability, and interpretability**, rather than policy advocacy or prediction.
 
 ## What’s New in v1.1.0
 
@@ -141,6 +142,7 @@ This allows users to simplify the view or focus on structure without altering th
 - ❌ It does not evaluate zoning policy quality or compliance
 - ❌ It does not show land value, land use, or population
 - ❌ It does not replace detailed parcel-level GIS workflows
+- ❌ It does not infer intent, compliance, or outcomes from zoning structure alone
 
 It answers a structural inventory question, not a normative policy question.
 
@@ -185,7 +187,7 @@ Parcel counts and zoning boundaries are subject to change as source data is upda
 
 ### Key design decisions
 
-- Local projected CRS (UTM14N) is used for all area calculations to ensure geometric correctness.
+- All spatial measurements are computed in a local projected CRS (UTM 14N) to ensure geometrically correct area calculations.
 - Geometry repair (`make_valid`, `buffer(0)`) is applied defensively to prevent topology errors.
 - Aggregations are driven from parcel-level truth, not polygon overlaps.
 - The app is configuration-driven (e.g., jurisdiction labels via `.env`).
