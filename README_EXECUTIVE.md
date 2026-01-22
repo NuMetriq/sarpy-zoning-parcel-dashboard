@@ -1,6 +1,6 @@
-\# Sarpy County Zoning Structure Dashboard  
+# Sarpy County Zoning Structure Dashboard  
 
-\### Executive Overview
+### Executive Overview
 
 
 
@@ -12,7 +12,7 @@ It answers a narrow but foundational question:
 
 
 
-> \*How are parcels distributed across zoning districts, by jurisdiction, in practice?\*
+> *How are parcels distributed across zoning districts, by jurisdiction, in practice?\*
 
 
 
@@ -20,19 +20,19 @@ It answers a narrow but foundational question:
 
 
 
-\## What This Tool Is
+## What This Tool Is
 
 
 
-\- A jurisdiction-aware zoning inventory
+- A jurisdiction-aware zoning inventory
 
-\- A parcel-grounded view of zoning structure
+- A parcel-grounded view of zoning structure
 
-\- A transparency and data-quality diagnostic tool
+- A transparency and data-quality diagnostic tool
 
 
 
-It is designed for \*\*planning staff, analysts, and decision-makers\*\* who need reliable descriptive insight before engaging in deeper policy or land-use analysis.
+It is designed for **planning staff, analysts, and decision-makers** who need reliable descriptive insight before engaging in deeper policy or land-use analysis.
 
 
 
@@ -40,37 +40,37 @@ It is designed for \*\*planning staff, analysts, and decision-makers\*\* who nee
 
 
 
-\## What the Dashboard Shows
+## What the Dashboard Shows
 
 
 
-\### Zoning impact by parcel count
+### Zoning impact by parcel count
 
 Which zoning categories govern the most parcels within a jurisdiction.
 
 
 
-\### Zoning structure by land area
+### Zoning structure by land area
 
 How much land area each zoning category occupies within a jurisdiction.
 
 
 
-\### Side-by-side jurisdiction comparison
+### Side-by-side jurisdiction comparison
 
 Direct comparison of zoning distributions across municipalities such as Bellevue, Papillion, and La Vista.
 
 
 
-\### Data quality \& coverage
+### Data quality & coverage
 
 Clear indicators of:
 
-\- parcel coverage
+- parcel coverage
 
-\- zoning assignment completeness
+- zoning assignment completeness
 
-\- geometry health
+- geometry health
 
 
 
@@ -82,19 +82,19 @@ This allows users to assess confidence in the results.
 
 
 
-\## What This Tool Does \*Not\* Do
+## What This Tool Does *Not* Do
 
 
 
-\- It does not evaluate zoning policy quality or effectiveness
+- It does not evaluate zoning policy quality or effectiveness
 
-\- It does not measure land value, density outcomes, or compliance
+- It does not measure land value, density outcomes, or compliance
 
-\- It does not replace detailed parcel-level GIS workflows
+- It does not replace detailed parcel-level GIS workflows
 
 
 
-The dashboard is \*\*descriptive, not prescriptive\*\*.
+The dashboard is **descriptive, not prescriptive**.
 
 
 
@@ -102,41 +102,21 @@ The dashboard is \*\*descriptive, not prescriptive\*\*.
 
 
 
-\## Why This Matters
+## Why This Matters
 
 
 
-Before policy analysis, rezoning discussions, or housing studies can proceed responsibly, planners need to understand the \*\*existing zoning structure as it actually applies to parcels\*\*.
+Before policy analysis, rezoning discussions, or housing studies can proceed responsibly, planners need to understand the **existing zoning structure as it actually applies to parcels**.
 
 
 
 This tool provides:
 
-\- a defensible baseline
+- a defensible baseline
 
-\- a shared factual reference point
+- a shared factual reference point
 
-\- transparency into data limitations
-
-
-
----
-
-
-
-\## Data \& Methodology (High Level)
-
-
-
-\- Public GIS data published by Sarpy County
-
-\- Parcel-to-zoning spatial joins with deduplication
-
-\- Geometry repair and validation
-
-\- Jurisdiction-aware aggregation
-
-\- Area calculations performed in a projected CRS for accuracy
+- transparency into data limitations
 
 
 
@@ -144,19 +124,39 @@ This tool provides:
 
 
 
-\## Intended Use
+## Data & Methodology (High Level)
+
+
+
+- Public GIS data published by Sarpy County
+
+- Parcel-to-zoning spatial joins with deduplication
+
+- Geometry repair and validation
+
+- Jurisdiction-aware aggregation
+
+- Area calculations performed in a projected CRS for accuracy
+
+
+
+---
+
+
+
+## Intended Use
 
 
 
 This dashboard is intended to support:
 
-\- internal planning analysis
+- internal planning analysis
 
-\- scoping and workload estimation
+- scoping and workload estimation
 
-\- data validation and QA
+- data validation and QA
 
-\- preparation for downstream studies
+- preparation for downstream studies
 
 
 
@@ -168,11 +168,11 @@ It is not a substitute for formal planning judgments or legal interpretation.
 
 
 
-\## Developed By
+## Developed By
 
 
 
-\*\*NuMetriq LLC\*\*  
+**NuMetriq LLC**  
 
 Applied analytics for public-sector and operational decision support
 
