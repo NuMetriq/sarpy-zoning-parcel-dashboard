@@ -332,6 +332,83 @@ def _maybe_import_altair():
         return None
 
 
+
+# -------------------------------------------------------------------
+# Data quality helpers
+# -------------------------------------------------------------------
+def compute_data_quality(parcels_all: gpd.GeoDataFrame, zoning_raw: gpd.GeoDataFrame, *, selected_jurisdictions: Optional[list[int]]) -> dict[str, Any]:
+    """
+    Compute data quality + coverage metrics, respecting the current jurisdiction filter.
+
+    Notes:
+    - Coverage is measured as share of parcels with non-null zoning_code.
+    - If parcels have no jurisdiction column, jurisdiction is inferred via zoning polygons (cached).
+    """
+    parcels_mtime = float(PARCELS_PATH.stat().st_mtime)
+    zoning_mtime = float(ZONING_RAW_PATH.stat().st_mtime)
+
+    # Ensure jurisdiction exists on parcels for breakdowns
+    parcels_j = assign_parcel_jurisdiction(
+        parcels_all,
+        zoning_raw,
+        parcels_mtime=parcels_mtime,
+        zoning_mtime=zoning_mtime,
+    ) if ("jurisdiction" not in parcels_all.columns and "jurisdiction" in zoning_raw.columns) else parcels_all.copy()
+
+    if selected_jurisdictions is not None and "jurisdiction" in parcels_j.columns:
+        parcels_j = parcels_j[parcels_j["jurisdiction"].isin(selected_jurisdictions)].copy()
+
+    # Basic counts
+    parcel_id_col = "parcel_id" if "parcel_id" in parcels_j.columns else None
+    n_rows = len(parcels_j)
+    n_parcels = int(parcels_j[parcel_id_col].nunique()) if parcel_id_col else int(n_rows)
+
+    has_zoning = parcels_j.get("zoning_code").notna() if "zoning_code" in parcels_j.columns else pd.Series([False] * n_rows)
+    n_assigned = int(has_zoning.sum())
+    pct_assigned = (n_assigned / n_parcels) if n_parcels else 0.0
+
+    # Geometry health
+    geom = parcels_j.geometry
+    n_empty = int(geom.is_empty.sum()) if geom is not None else 0
+    try:
+        n_invalid = int((~geom.is_valid).sum()) if geom is not None else 0
+    except Exception:
+        n_invalid = 0
+
+    # Zoning polygon stats (within jurisdiction filter)
+    z = zoning_raw.copy()
+    if selected_jurisdictions is not None and "jurisdiction" in z.columns:
+        z = z[z["jurisdiction"].isin(selected_jurisdictions)].copy()
+
+    n_zoning_polys = int(len(z))
+    n_zoning_codes = int(z["zoning_code"].astype(str).nunique()) if "zoning_code" in z.columns else 0
+    n_jurisdictions = int(z["jurisdiction"].nunique()) if "jurisdiction" in z.columns else 0
+
+    # Breakdown table by jurisdiction (if available)
+    by_jur = pd.DataFrame()
+    if "jurisdiction" in parcels_j.columns:
+        g = parcels_j.groupby(parcels_j["jurisdiction"].astype(int), dropna=False)
+        by_jur = pd.DataFrame(
+            {
+                "jurisdiction": g["jurisdiction"].first().astype(int),
+                "parcels": g[parcel_id_col].nunique() if parcel_id_col else g.size(),
+                "parcels_w_zoning": g["zoning_code"].apply(lambda s: int(s.notna().sum())) if "zoning_code" in parcels_j.columns else 0,
+            }
+        ).reset_index(drop=True)
+        by_jur["pct_w_zoning"] = (by_jur["parcels_w_zoning"] / by_jur["parcels"]).fillna(0.0)
+
+    return {
+        "n_parcels": n_parcels,
+        "n_assigned": n_assigned,
+        "pct_assigned": pct_assigned,
+        "n_empty_geom": n_empty,
+        "n_invalid_geom": n_invalid,
+        "n_zoning_polys": n_zoning_polys,
+        "n_zoning_codes": n_zoning_codes,
+        "n_jurisdictions": n_jurisdictions,
+        "by_jurisdiction": by_jur,
+    }
+
 # -------------------------------------------------------------------
 # App
 # -------------------------------------------------------------------
@@ -401,6 +478,13 @@ def main() -> None:
             st.warning("No jurisdictions selected. Choose at least one to display the map.")
             st.stop()
 
+
+    # Map layer visibility
+    st.sidebar.header("Map Layers")
+    show_zoning_fill = st.sidebar.checkbox("Zoning polygons (fill)", value=True)
+    show_zoning_outline = st.sidebar.checkbox("Zoning outlines", value=True)
+    show_zoning_labels = st.sidebar.checkbox("Zoning labels", value=False)
+
     # Apply zoning filter
     zoning_f = zoning_raw
     if selected_jurisdictions is not None:
@@ -464,7 +548,7 @@ def main() -> None:
     # -------------------------------------------------------------------
     # Tabs
     # -------------------------------------------------------------------
-    tab_map, tab_compare = st.tabs(["Map & Rollups", "Comparison"])
+    tab_map, tab_compare, tab_quality = st.tabs(["Map & Rollups", "Comparison", "Data Quality & Coverage"])
 
     # ==========================
     # Tab: Map & Rollups (existing)
@@ -582,30 +666,75 @@ def main() -> None:
                 pd.to_numeric(map_gdf_colored["metric_for_color"], errors="coerce").fillna(0.0).round(2)
             )
 
+            
             geojson = json.loads(map_gdf_colored.to_json())
 
-            layer = pdk.Layer(
-                "GeoJsonLayer",
-                data=geojson,
-                pickable=True,
-                stroked=True,
-                filled=True,
-                extruded=False,
-                wireframe=False,
-                opacity=0.9,
-                get_fill_color="properties.fill_color",
-                get_line_color=[0, 0, 0, 140],
-                get_line_width=50,
-            )
+            layers: list[pdk.Layer] = []
+
+            if show_zoning_fill:
+                layers.append(
+                    pdk.Layer(
+                        "GeoJsonLayer",
+                        id="zoning-fill",
+                        data=geojson,
+                        pickable=True,
+                        stroked=False,
+                        filled=True,
+                        extruded=False,
+                        wireframe=False,
+                        opacity=0.9,
+                        get_fill_color="properties.fill_color",
+                    )
+                )
+
+            if show_zoning_outline:
+                layers.append(
+                    pdk.Layer(
+                        "GeoJsonLayer",
+                        id="zoning-outline",
+                        data=geojson,
+                        pickable=False,
+                        stroked=True,
+                        filled=False,
+                        extruded=False,
+                        wireframe=False,
+                        opacity=1.0,
+                        get_line_color=[0, 0, 0, 140],
+                        get_line_width=60,
+                    )
+                )
+
+            if show_zoning_labels:
+                # Use polygon centroids for label placement
+                label_df = map_gdf_colored[["zoning_label", "geometry"]].copy()
+                label_df = label_df.to_crs(WGS84_EPSG)
+                cent = label_df.geometry.centroid
+                label_df["lon"] = cent.x
+                label_df["lat"] = cent.y
+                label_records = label_df.drop(columns="geometry").to_dict(orient="records")
+
+                layers.append(
+                    pdk.Layer(
+                        "TextLayer",
+                        id="zoning-labels",
+                        data=label_records,
+                        get_position=["lon", "lat"],
+                        get_text="zoning_label",
+                        get_size=14,
+                        get_color=[0, 0, 0, 220],
+                        get_angle=0,
+                        pickable=False,
+                    )
+                )
 
             deck = pdk.Deck(
-                layers=[layer],
+                layers=layers,
                 initial_view_state=view_state_from_bounds(map_gdf_colored),
                 tooltip=build_tooltip(
                     has_desc=("zoning_desc" in map_gdf_colored.columns),
                     metric_short_label=metric_short_label,
                     metric_unit=metric_unit,
-                ),
+                ) if show_zoning_fill else None,
                 map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
             )
 
@@ -824,6 +953,60 @@ def main() -> None:
             file_name=export_name,
             mime="text/csv",
         )
+
+    # ==========================
+    # Tab: Data Quality & Coverage (NEW)
+    # ==========================
+    with tab_quality:
+        st.subheader("Data Quality & Coverage")
+        st.caption(
+            "Quick health checks for join coverage and geometry integrity. "
+            "All metrics respect the current jurisdiction filter selection."
+        )
+
+        try:
+            dq = compute_data_quality(parcels, zoning_raw, selected_jurisdictions=selected_jurisdictions)
+        except Exception as exc:
+            LOGGER.exception("Failed to compute data quality metrics")
+            st.error(f"Failed to compute data quality metrics: {exc}")
+            st.stop()
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Parcels in scope", f"{dq['n_parcels']:,}")
+        c2.metric("Parcels w/ zoning_code", f"{dq['n_assigned']:,}", f"{dq['pct_assigned']:.2%}")
+        c3.metric("Empty parcel geometries", f"{dq['n_empty_geom']:,}")
+        c4.metric("Invalid parcel geometries", f"{dq['n_invalid_geom']:,}")
+
+        st.divider()
+
+        d1, d2, d3 = st.columns(3)
+        d1.metric("Zoning polygons (raw)", f"{dq['n_zoning_polys']:,}")
+        d2.metric("Zoning codes (raw)", f"{dq['n_zoning_codes']:,}")
+        d3.metric("Jurisdictions (raw)", f"{dq['n_jurisdictions']:,}")
+
+        st.markdown("### Coverage by jurisdiction")
+        by_jur = dq["by_jurisdiction"]
+        if by_jur is None or len(by_jur) == 0:
+            st.info("Jurisdiction breakdown unavailable (parcels have no jurisdiction and it could not be inferred).")
+        else:
+            if labels:
+                by_jur = by_jur.copy()
+                by_jur["jurisdiction_label"] = by_jur["jurisdiction"].apply(lambda j: _format_jurisdiction(int(j), labels))
+                by_jur = by_jur[["jurisdiction_label", "parcels", "parcels_w_zoning", "pct_w_zoning"]].copy()
+                by_jur = by_jur.rename(columns={"jurisdiction_label": "jurisdiction"})
+            by_jur["pct_w_zoning"] = (by_jur["pct_w_zoning"] * 100).round(2)
+            st.dataframe(
+                by_jur.sort_values("parcels", ascending=False).reset_index(drop=True),
+                use_container_width=True,
+                height=420,
+            )
+
+        with st.expander("Notes / interpretation"):
+            st.markdown(
+                "- **Parcels w/ zoning_code** reflects whether a parcel has a non-null zoning assignment in the parcel dataset.\n"
+                "- **Invalid geometries** are detected via GeoPandas' `is_valid`; upstream repair steps may already have fixed many.\n"
+                "- Zoning polygon counts are from `zoning.parquet` after applying the jurisdiction filter."
+            )
 
 
 if __name__ == "__main__":
