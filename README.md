@@ -1,6 +1,7 @@
 # Sarpy Zoning Parcel Dashboard
 
 ![Status](https://img.shields.io/badge/status-public%20release-green)
+![Release](https://img.shields.io/badge/release-v1.1.0-blue)
 
 A reproducible GIS analytics pipeline and interactive dashboard that shows how parcels are distributed across zoning districts within Sarpy County, Nebraska and its municipalities.
 
@@ -22,6 +23,36 @@ This project provides:
 The goal is to demonstrate how public GIS data can be transformed into **decision-ready operational insight** using transparent, reproducible, open-source tooling.
 
 
+## What’s New in v1.1.0
+
+- **Parcel area-based zoning metrics**
+  - Total parcel area by zoning code
+  - Median parcel size by zoning code
+  - Percentage of jurisdiction land area by zoning
+
+- **Zoning metric toggle (count vs land area)**
+  - Allow users to switch how zoning intensity is measured
+    - Parcel count (v1.0.0)
+    - Total land area (v1.1.0)
+
+- **Jurisdiction comparison mode**
+  - Side-by-side zoning distributions across jurisdictions (e.g., Bellevue, Papillion, La Vista)
+  - Zoning mix by **parcel count**
+  - Zoning mix by **land area (acres)**
+  - Optional Top-N zoning categories with remainder grouped as “Other”
+
+- **Data Quality & Coverage panel**
+  - Parcel coverage KPIs (in scope, assigned zoning, % assigned)
+  - Geometry health indicators (empty / invalid geometries)
+  - Coverage breakdown by jurisdiction
+
+- **CSV export for filtered zoning results
+  - Allow users to export zoning summaries and parcel subsets that reflect the current dashboard filters
+
+- **Map layer visibility controls**
+  - Toggle zoning fill, outlines, and labels independently
+
+
 ## What the Dashboard Shows
 
 ### Zoning districts, colored by parcel concentration
@@ -29,6 +60,9 @@ The goal is to demonstrate how public GIS data can be transformed into **decisio
 - Each polygon represents a zoning district, not individual parcels.
 - Color intensity reflects the number of parcels primarily governed by that zoning code.
 - Darker areas indicate zoning categories that affect more parcels.
+
+**Note on land-area metrics:**  
+“Zoning polygon area (acres)” and “% of jurisdiction land area” represent the same underlying quantity expressed in different units. As a result, they typically produce identical map patterns.
 
 ### Deduplicated, authoritative parcel counts
 
@@ -59,6 +93,37 @@ A ranked table shows:
 - parcel count
 
 This supports reporting, exporting, and downstream analysis.
+
+### Jurisdiction comparison
+
+A dedicated **Comparison** tab enables side-by-side analysis of zoning structure across jurisdictions.
+
+Users can compare:
+- zoning mix by **parcel count**
+- zoning mix by **land area (acres)**
+
+Distributions can be shown as absolute values or percent share, and the view respects the active jurisdiction filters.
+
+### Data quality & coverage
+
+A **Data Quality & Coverage** panel makes data completeness explicit.
+
+It surfaces:
+- how many parcels are in scope
+- how many parcels received a zoning assignment
+- geometry validity checks
+- coverage metrics by jurisdiction
+
+This helps users interpret results correctly and identify gaps or edge cases in the source data.
+
+### Map layer controls
+
+The map includes visibility toggles for:
+- zoning polygon fills
+- zoning outlines
+- zoning labels
+
+This allows users to simplify the view or focus on structure without altering the underlying metrics.
 
 
 ## Methodology at a Glance
@@ -246,11 +311,11 @@ streamlit run src/opsdash/app/streamlit_app.py
 
 Potential next steps include:
 
-- parcel-area-weighted zoning analysis
-- Bellevue-only default view
-- exportable CSV and GeoJSON outputs
+- parcel-area-weighted zoning impact analysis
 - historical zoning change tracking
-- land-use or housing overlays
+- land-use, housing, or valuation overlays
+- jurisdiction-level time series
+- performance optimizations for large zoning label sets
 
 
 ## About This Project
